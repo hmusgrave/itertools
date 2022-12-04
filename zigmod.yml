@@ -1,0 +1,6 @@
+id: rj1el9n94duuz1uitwtrcunk8fgbzp2t5ihti5cs8n1uuwq5
+name: itertools
+main: src/main.zig
+license: AGPL-3.0
+description: tools for iterators in Zig
+dependencies:
