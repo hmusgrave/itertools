@@ -148,6 +148,32 @@ fn EnumerateT(comptime ChildT: type) type {
     };
 }
 
+fn ChainT(comptime FirstT: type, comptime SecondT: type) type {
+    const T0 = @typeInfo(@TypeOf(FirstT.next)).Fn.return_type.?;
+    const T1 = @typeInfo(@TypeOf(SecondT.next)).Fn.return_type.?;
+
+    return struct {
+        first: FirstT,
+        second: SecondT,
+        finished_first: bool,
+
+        pub inline fn init(first: FirstT, second: SecondT) @This() {
+            return .{ .first = first, .second = second, .finished_first = false };
+        }
+
+        pub inline fn next(self: *@This()) @TypeOf(@as(T0, undefined), @as(T1, undefined)) {
+            if (self.finished_first) {
+                return self.second.next();
+            } else if (self.first.next()) |result| {
+                return result;
+            } else {
+                self.finished_first = true;
+                return self.second.next();
+            }
+        }
+    };
+}
+
 pub fn IteratorT(comptime ChildT: type) type {
     // TODO: handle pointers and whatnot
     const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
@@ -176,6 +202,14 @@ pub fn IteratorT(comptime ChildT: type) type {
 
         pub inline fn enumerate(self: @This()) IteratorT(EnumerateT(@This())) {
             return Iterator(EnumerateT(@This()).init(self));
+        }
+
+        pub inline fn then(self: @This(), other: anytype) IteratorT(ChainT(@This(), @TypeOf(other))) {
+            return Iterator(ChainT(@This(), @TypeOf(other)).init(self, other));
+        }
+
+        pub inline fn following(self: @This(), other: anytype) IteratorT(ChainT(@TypeOf(other), @This())) {
+            return Iterator(ChainT(@TypeOf(other), @This()).init(other, self));
         }
     };
 }
@@ -231,5 +265,25 @@ test "doesn't crash" {
         } else {
             return error.TooManyIterations;
         }
+    }
+}
+
+test "chain" {
+    var it = Iterator(TestIter.init(3))
+        .then(TestIter.init(2));
+    var results = [_]usize{ 3, 2, 1, 0, 2, 1, 0 };
+    var i: usize = 0;
+    while (it.next()) |val| : (i += 1) {
+        try expectEqual(results[i], val);
+    }
+}
+
+test "following" {
+    var it = Iterator(TestIter.init(2))
+        .following(TestIter.init(3));
+    var results = [_]usize{ 3, 2, 1, 0, 2, 1, 0 };
+    var i: usize = 0;
+    while (it.next()) |val| : (i += 1) {
+        try expectEqual(results[i], val);
     }
 }
