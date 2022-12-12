@@ -82,6 +82,39 @@ fn MapT(comptime ChildT: type, comptime _f: anytype) type {
     };
 }
 
+fn ScanT(comptime ChildT: type, comptime _f_carry: anytype, comptime _f_rtn: anytype, comptime CarryT: type) type {
+    const f_carry = ExtractFn(_f_carry);
+    const f_rtn = ExtractFn(_f_rtn);
+
+    const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
+
+    const FInT = switch (@typeInfo(NextOptT)) {
+        .Optional => |opt| opt.child,
+        else => NextOptT,
+    };
+
+    const FOutT = @TypeOf(f_rtn(@as(CarryT, undefined), @as(FInT, undefined)));
+
+    return struct {
+        child: ChildT,
+        carry: CarryT,
+
+        pub inline fn init(child: anytype, carry: CarryT) @This() {
+            return .{ .child = child, .carry = carry };
+        }
+
+        pub inline fn next(self: *@This()) ?FOutT {
+            if (self.child.next()) |_val| {
+                var val = _val;
+                var rtn = f_rtn(self.carry, val);
+                self.carry = f_carry(self.carry, val);
+                return rtn;
+            }
+            return null;
+        }
+    };
+}
+
 fn FilterMapT(comptime ChildT: type, comptime _f: anytype) type {
     const f = ExtractFn(_f);
 
@@ -423,6 +456,10 @@ pub fn IteratorT(comptime ChildT: type) type {
                 return Iterator(RepeatT(@This(), @TypeOf(kwargs)).init(self));
             }
         }
+
+        pub inline fn scan(self: @This(), comptime f_carry: anytype, comptime f_rtn: anytype, carry: anytype) IteratorT(ScanT(@This(), f_carry, f_rtn, @TypeOf(carry))) {
+            return Iterator(ScanT(@This(), f_carry, f_rtn, @TypeOf(carry)).init(self, carry));
+        }
     };
 }
 
@@ -612,5 +649,25 @@ test "repeat n" {
     try expectEqual(iter.next(), 2);
     try expectEqual(iter.next(), 1);
     try expectEqual(iter.next(), 0);
+    try expectEqual(iter.next(), @as(?usize, null));
+}
+
+test "scan" {
+    var iter = Iterator(TestIter.init(4))
+        .scan(struct {
+        pub fn running_sum(carry: usize, cur: usize) usize {
+            return carry + cur;
+        }
+    }, struct {
+        pub fn add(carry: usize, cur: usize) usize {
+            return carry + cur;
+        }
+    }, @as(usize, 0));
+
+    try expectEqual(iter.next(), 4);
+    try expectEqual(iter.next(), 7);
+    try expectEqual(iter.next(), 9);
+    try expectEqual(iter.next(), 10);
+    try expectEqual(iter.next(), 10);
     try expectEqual(iter.next(), @as(?usize, null));
 }
