@@ -467,6 +467,11 @@ pub fn Iterator(child: anytype) IteratorT(@TypeOf(child)) {
     return IteratorT(@TypeOf(child)).init(child);
 }
 
+// TODO: This should be the main entrypoint. Clean everything up around this function.
+pub fn iterate(child: anytype, kwargs: anytype) @TypeOf(Iterator(create.iterate(child, kwargs))) {
+    return Iterator(create.iterate(child, kwargs));
+}
+
 const TestIter = struct {
     val: ?usize,
 
@@ -653,7 +658,7 @@ test "repeat n" {
 }
 
 test "scan" {
-    var iter = Iterator(TestIter.init(4))
+    var iter = iterate([_]usize{ 4, 3, 2, 1, 0 }, .{})
         .scan(struct {
         pub fn running_sum(carry: usize, cur: usize) usize {
             return carry + cur;
