@@ -268,6 +268,32 @@ fn SkipT(comptime ChildT: type) type {
     };
 }
 
+fn TakewhileT(comptime ChildT: type, comptime _f: anytype) type {
+    const f = ExtractFn(_f);
+
+    const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
+
+    return struct {
+        child: ChildT,
+        should_stop: bool,
+
+        pub inline fn init(child: anytype) @This() {
+            return .{ .child = child, .should_stop = false };
+        }
+
+        pub inline fn next(self: *@This()) NextOptT {
+            if (self.should_stop)
+                return null;
+            if (self.child.next()) |inp| {
+                if (f(inp))
+                    return inp;
+            }
+            self.should_stop = true;
+            return null;
+        }
+    };
+}
+
 pub fn IteratorT(comptime ChildT: type) type {
     // TODO: handle pointers and whatnot
     const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
@@ -320,6 +346,10 @@ pub fn IteratorT(comptime ChildT: type) type {
 
         pub inline fn skip(self: @This(), n: usize) IteratorT(SkipT(@This())) {
             return Iterator(SkipT(@This()).init(self, n));
+        }
+
+        pub inline fn take_while(self: @This(), comptime f: anytype) IteratorT(TakewhileT(@This(), f)) {
+            return Iterator(TakewhileT(@This(), f).init(self));
         }
     };
 }
@@ -473,4 +503,16 @@ test "skip" {
     try expectEqual(skipped_iter.next(), 1);
     try expectEqual(skipped_iter.next(), 0);
     try expectEqual(skipped_iter.next(), @as(?usize, null));
+}
+
+test "take_while" {
+    var iter = Iterator(TestIter.init(3))
+        .take_while(struct {
+        pub fn small(x: usize) bool {
+            return x > 2;
+        }
+    });
+
+    try expectEqual(iter.next(), 3);
+    try expectEqual(iter.next(), @as(?usize, null));
 }
