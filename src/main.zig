@@ -174,6 +174,27 @@ fn ChainT(comptime FirstT: type, comptime SecondT: type) type {
     };
 }
 
+fn MethodMapT(comptime BaseT: type, comptime MethodName: []const u8) type {
+    const T0 = @typeInfo(@typeInfo(@TypeOf(BaseT.next)).Fn.return_type.?).Optional.child;
+    const RT = @typeInfo(@TypeOf(@field(T0, MethodName))).Fn.return_type.?;
+
+    return struct {
+        base: BaseT,
+
+        pub inline fn init(base: BaseT) @This() {
+            return .{ .base = base };
+        }
+
+        pub inline fn next(self: *@This()) ?RT {
+            if (self.base.next()) |item| {
+                var z = item;
+                return @field(z, MethodName)();
+            }
+            return null;
+        }
+    };
+}
+
 pub fn IteratorT(comptime ChildT: type) type {
     // TODO: handle pointers and whatnot
     const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
@@ -210,6 +231,10 @@ pub fn IteratorT(comptime ChildT: type) type {
 
         pub inline fn following(self: @This(), other: anytype) IteratorT(ChainT(@TypeOf(other), @This())) {
             return Iterator(ChainT(@TypeOf(other), @This()).init(other, self));
+        }
+
+        pub inline fn method_map(self: @This(), comptime MethodName: []const u8) IteratorT(MethodMapT(@This(), MethodName)) {
+            return Iterator(MethodMapT(@This(), MethodName).init(self));
         }
     };
 }
@@ -282,6 +307,37 @@ test "following" {
     var it = Iterator(TestIter.init(2))
         .following(TestIter.init(3));
     var results = [_]usize{ 3, 2, 1, 0, 2, 1, 0 };
+    var i: usize = 0;
+    while (it.next()) |val| : (i += 1) {
+        try expectEqual(results[i], val);
+    }
+}
+
+const TestMethodIter = struct {
+    const Rtn = struct {
+        pub fn foo(_: *@This()) usize {
+            return 42;
+        }
+    };
+
+    done: bool,
+
+    pub fn init() @This() {
+        return .{ .done = false };
+    }
+
+    pub fn next(self: *@This()) ?Rtn {
+        defer self.done = true;
+        if (self.done)
+            return null;
+        return Rtn{};
+    }
+};
+
+test "method_map" {
+    var it = Iterator(TestMethodIter.init())
+        .method_map("foo");
+    var results = [_]usize{42};
     var i: usize = 0;
     while (it.next()) |val| : (i += 1) {
         try expectEqual(results[i], val);
