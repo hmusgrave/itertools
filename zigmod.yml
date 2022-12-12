@@ -3,4 +3,7 @@ name: itertools
 main: src/main.zig
 license: AGPL-3.0
 description: tools for iterators in Zig
+root_dependencies:
+  - src: git https://github.com/hmusgrave/zkwargs
 dependencies:
+  - src: git https://github.com/hmusgrave/zkwargs

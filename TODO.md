@@ -245,3 +245,25 @@
 - mapping functions need some care with respect to nulls/errs. It needs to be convenient to handle errors properly (`while (try it.next()) |_| {}` seems reasonable), but we also want to be faithful to the original types (can we provide easy wrapper utilities?), and we also want to be explicit about, e.g., when a mapped function returns a null and the underlying data didn't, is that an actual null we're supposed to communicate, is that assumed unreachable, does that allow for easy short-circuiting (an implementation of takeWhile perhaps?)?
 - `unwrap` probably needs to poison everything. defer it just like length hints for v1.
 - linq and more-linq have added node/tree-related functions. Should we support those?
+
+### more notes -- errs
+- The interface is fundamentally lazy. Developers can only interact with an intermediate error by explicitly handling it inside the pipeline, doing something special at the `next` call, or examining some global state after the fact.
+- Developers need to be able to handle it inside the pipeline to respond to handlable errors.
+- To do that, the pipeline must be able to pass error unions on unimpeded.
+- If we're using global state, we still need to know what to do with the intermediate errors (drop, stop, nullify, ...), so the inside of the pipeline is still complicated
+- So the only thing global state might make nice is the ability to check for errors at the end of a computation. That's already easy though with other approaches; you could have `next` support the `while (try ...)` syntax by default, or if you need something more fine-grained you build that into the pipeline and check if the result is an error. The iterator doesn't need to know about that.
+- So, errors are being handled internally and getting bubbled up to results (when an iterator is reduced), and to yielded valus (when next is called). To make that latter thing nice but unsurprising, we should just offer a transform that rotates the null/err types in the next values.
+
+### more notes -- map/filter
+- We can probably do isinstance and cast functionality pretty easily
+
+### more notes -- sugar
+- Till Zig supports lambdas we should accept single-function structs
+
+### more notes -- type signatures
+- We need some sort of Iterator(T) type to hold all the fluent methods.
+- For that to work seamlessly without allocation, it needs to reference the underlying iterator.
+- And again, for that to be known at compile time we need to know the type of the underlying iterator at comptime.
+- The most straightforward solution is for T to be the type of the underlying iterator.
+- This implies a linked list of types. Great for common cases, but what happens when people want to return these or pass them around? We're punting the problem down the road to somebody who will finally have to deal with the ambiguity.
+- Orrrr, we can add a convenience method to let people wrap their iterator type into something more generic and break the type chain, with optional (default?) allocation.
