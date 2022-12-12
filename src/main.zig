@@ -1,6 +1,7 @@
 const std = @import("std");
 const expectEqual = std.testing.expectEqual;
 const create = @import("create.zig");
+const zkwargs = @import("zkwargs");
 
 test "create tests" {
     _ = create;
@@ -268,26 +269,66 @@ fn SkipT(comptime ChildT: type) type {
     };
 }
 
-fn RepeatT(comptime ChildT: type) type {
+const RepeatTOptions = struct {
+    pub fn n(comptime _: ?type) type {
+        return usize;
+    }
+};
+
+fn RepeatT(comptime ChildT: type, comptime KwargsT: type) type {
     const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
 
-    return struct {
-        initial: ChildT,
-        child: ChildT,
+    if (@hasField(KwargsT, "n")) {
+        return struct {
+            initial: ChildT,
+            child: ChildT,
+            loop_i: usize,
+            loop_count: usize,
 
-        pub inline fn init(child: anytype) @This() {
-            return .{ .initial = child, .child = child };
-        }
-
-        pub inline fn next(self: *@This()) NextOptT {
-            if (self.child.next()) |val| {
-                return val;
-            } else {
-                self.child = self.initial;
-                return self.child.next();
+            pub inline fn init(child: anytype, loop_count: usize) @This() {
+                return .{ .initial = child, .child = child, .loop_i = 0, .loop_count = loop_count };
             }
-        }
-    };
+
+            pub inline fn next(self: *@This()) NextOptT {
+                if (self.loop_i >= self.loop_count)
+                    return null;
+                if (self.child.next()) |val| {
+                    return val;
+                } else {
+                    self.child = self.initial;
+                    self.loop_i += 1;
+                    if (self.loop_i < self.loop_count) {
+                        var rtn = self.child.next();
+                        if (rtn == null) {
+                            self.child = self.initial;
+                            self.loop_i += 1;
+                        }
+                        return rtn;
+                    } else {
+                        return null;
+                    }
+                }
+            }
+        };
+    } else {
+        return struct {
+            initial: ChildT,
+            child: ChildT,
+
+            pub inline fn init(child: anytype) @This() {
+                return .{ .initial = child, .child = child };
+            }
+
+            pub inline fn next(self: *@This()) NextOptT {
+                if (self.child.next()) |val| {
+                    return val;
+                } else {
+                    self.child = self.initial;
+                    return self.child.next();
+                }
+            }
+        };
+    }
 }
 
 fn TakewhileT(comptime ChildT: type, comptime _f: anytype) type {
@@ -374,8 +415,13 @@ pub fn IteratorT(comptime ChildT: type) type {
             return Iterator(TakewhileT(@This(), f).init(self));
         }
 
-        pub inline fn repeat(self: @This()) IteratorT(RepeatT(@This())) {
-            return Iterator(RepeatT(@This()).init(self));
+        pub inline fn repeat(self: @This(), _kwargs: anytype) IteratorT(RepeatT(@This(), @TypeOf(zkwargs.Options(RepeatTOptions).parse(_kwargs)))) {
+            var kwargs = zkwargs.Options(RepeatTOptions).parse(_kwargs);
+            if (@hasField(@TypeOf(kwargs), "n")) {
+                return Iterator(RepeatT(@This(), @TypeOf(kwargs)).init(self, kwargs.n));
+            } else {
+                return Iterator(RepeatT(@This(), @TypeOf(kwargs)).init(self));
+            }
         }
     };
 }
@@ -544,7 +590,7 @@ test "take_while" {
 }
 
 test "repeat" {
-    var iter = Iterator(TestIter.init(2)).repeat();
+    var iter = Iterator(TestIter.init(2)).repeat(.{});
 
     try expectEqual(iter.next(), 2);
     try expectEqual(iter.next(), 1);
@@ -555,4 +601,16 @@ test "repeat" {
     try expectEqual(iter.next(), 2);
     try expectEqual(iter.next(), 1);
     try expectEqual(iter.next(), 0);
+}
+
+test "repeat n" {
+    var iter = Iterator(TestIter.init(2)).repeat(.{ .n = 2 });
+
+    try expectEqual(iter.next(), 2);
+    try expectEqual(iter.next(), 1);
+    try expectEqual(iter.next(), 0);
+    try expectEqual(iter.next(), 2);
+    try expectEqual(iter.next(), 1);
+    try expectEqual(iter.next(), 0);
+    try expectEqual(iter.next(), @as(?usize, null));
 }
