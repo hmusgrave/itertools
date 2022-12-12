@@ -195,6 +195,58 @@ fn MethodMapT(comptime BaseT: type, comptime MethodName: []const u8) type {
     };
 }
 
+fn InterleaveT(comptime FirstT: type, comptime SecondT: type) type {
+    const T0 = @typeInfo(@TypeOf(FirstT.next)).Fn.return_type.?;
+    const T1 = @typeInfo(@TypeOf(SecondT.next)).Fn.return_type.?;
+
+    return struct {
+        first: FirstT,
+        second: SecondT,
+        which: bool,
+
+        pub inline fn init(first: FirstT, second: SecondT) @This() {
+            return .{ .first = first, .second = second, .which = true };
+        }
+
+        pub inline fn next(self: *@This()) @TypeOf(@as(T0, undefined), @as(T1, undefined)) {
+            if (self.which) {
+                if (self.first.next()) |result| {
+                    self.which = !self.which;
+                    return result;
+                }
+                return self.second.next();
+            } else {
+                if (self.second.next()) |result| {
+                    self.which = !self.which;
+                    return result;
+                }
+                return self.first.next();
+            }
+        }
+    };
+}
+
+fn FilterT(comptime BaseT: type, comptime _f: anytype) type {
+    const f = ExtractFn(_f);
+    const T0 = @typeInfo(@TypeOf(BaseT.next)).Fn.return_type.?;
+    return struct {
+        base: BaseT,
+
+        pub inline fn init(base: BaseT) @This() {
+            return .{ .base = base };
+        }
+
+        pub inline fn next(self: *@This()) ?T0 {
+            while (self.base.next()) |val| {
+                if (f(val)) {
+                    return val;
+                }
+            }
+            return null;
+        }
+    };
+}
+
 pub fn IteratorT(comptime ChildT: type) type {
     // TODO: handle pointers and whatnot
     const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
@@ -235,6 +287,14 @@ pub fn IteratorT(comptime ChildT: type) type {
 
         pub inline fn method_map(self: @This(), comptime MethodName: []const u8) IteratorT(MethodMapT(@This(), MethodName)) {
             return Iterator(MethodMapT(@This(), MethodName).init(self));
+        }
+
+        pub inline fn interleave(self: @This(), other: anytype) IteratorT(InterleaveT(@This(), @TypeOf(other))) {
+            return Iterator(InterleaveT(@This(), @TypeOf(other)).init(self, other));
+        }
+
+        pub inline fn filter(self: @This(), comptime filter_fn: anytype) IteratorT(FilterT(@This(), filter_fn)) {
+            return Iterator(FilterT(@This(), filter_fn).init(self));
         }
     };
 }
@@ -342,4 +402,41 @@ test "method_map" {
     while (it.next()) |val| : (i += 1) {
         try expectEqual(results[i], val);
     }
+}
+
+test "interleave" {
+    var it = Iterator(TestIter.init(3))
+        .interleave(TestIter.init(2));
+    var results = [_]usize{ 3, 2, 2, 1, 1, 0, 0 };
+    var i: usize = 0;
+    while (it.next()) |val| : (i += 1) {
+        try expectEqual(results[i], val);
+    }
+}
+
+const TestFilterIter = struct {
+    done: bool,
+    pub fn init() @This() {
+        return .{ .done = false };
+    }
+    pub fn next(self: *@This()) ?usize {
+        defer self.done = true;
+        if (self.done)
+            return null;
+        return 3;
+    }
+};
+
+test "filter" {
+    var it = Iterator(TestFilterIter.init())
+        .filter(struct {
+        fn foo(x: usize) bool {
+            return x % 2 == 1;
+        }
+    });
+    var i: usize = 0;
+    while (it.next()) |val| : (i += 1) {
+        try expectEqual(val, 3);
+    }
+    try expectEqual(i, 1);
 }
