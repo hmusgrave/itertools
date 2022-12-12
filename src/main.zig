@@ -268,6 +268,28 @@ fn SkipT(comptime ChildT: type) type {
     };
 }
 
+fn RepeatT(comptime ChildT: type) type {
+    const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
+
+    return struct {
+        initial: ChildT,
+        child: ChildT,
+
+        pub inline fn init(child: anytype) @This() {
+            return .{ .initial = child, .child = child };
+        }
+
+        pub inline fn next(self: *@This()) NextOptT {
+            if (self.child.next()) |val| {
+                return val;
+            } else {
+                self.child = self.initial;
+                return self.child.next();
+            }
+        }
+    };
+}
+
 fn TakewhileT(comptime ChildT: type, comptime _f: anytype) type {
     const f = ExtractFn(_f);
 
@@ -350,6 +372,10 @@ pub fn IteratorT(comptime ChildT: type) type {
 
         pub inline fn take_while(self: @This(), comptime f: anytype) IteratorT(TakewhileT(@This(), f)) {
             return Iterator(TakewhileT(@This(), f).init(self));
+        }
+
+        pub inline fn repeat(self: @This()) IteratorT(RepeatT(@This())) {
+            return Iterator(RepeatT(@This()).init(self));
         }
     };
 }
@@ -515,4 +541,18 @@ test "take_while" {
 
     try expectEqual(iter.next(), 3);
     try expectEqual(iter.next(), @as(?usize, null));
+}
+
+test "repeat" {
+    var iter = Iterator(TestIter.init(2)).repeat();
+
+    try expectEqual(iter.next(), 2);
+    try expectEqual(iter.next(), 1);
+    try expectEqual(iter.next(), 0);
+    try expectEqual(iter.next(), 2);
+    try expectEqual(iter.next(), 1);
+    try expectEqual(iter.next(), 0);
+    try expectEqual(iter.next(), 2);
+    try expectEqual(iter.next(), 1);
+    try expectEqual(iter.next(), 0);
 }
