@@ -723,3 +723,28 @@ test "reduce" {
     try expectEqual(iter.next(), 10);
     try expectEqual(iter.next(), @as(?usize, null));
 }
+
+test "scan over 1 element" {
+    var iter = iterate([_]usize{4}, .{})
+        .scan(struct {
+        pub fn running_sum(carry: usize, cur: usize) usize {
+            return carry + cur;
+        }
+    }, struct {
+        pub fn add(carry: usize, cur: usize) usize {
+            return carry + cur;
+        }
+    }, @as(usize, 0));
+    try expectEqual(iter.next(), 4);
+    try expectEqual(iter.next(), @as(?usize, null));
+}
+
+test "single element reduce" {
+    var iter = iterate([_]usize{1}, .{}).reduce(struct {
+        pub fn add(carry: usize, cur: usize) usize {
+            return carry + cur;
+        }
+    }, @as(usize, 0));
+    try expectEqual(iter.next(), 1);
+    try expectEqual(iter.next(), @as(?usize, null));
+}
