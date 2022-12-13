@@ -364,6 +364,38 @@ fn RepeatT(comptime ChildT: type, comptime KwargsT: type) type {
     }
 }
 
+fn ReduceT(comptime ChildT: type, comptime _f: anytype) type {
+    const f = ExtractFn(_f);
+    const T0 = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
+    const FInT = switch (@typeInfo(T0)) {
+        .Optional => |opt| opt.child,
+        else => T0,
+    };
+
+    const FOutT = @TypeOf(f(@as(FInT, undefined), @as(FInT, undefined)));
+
+    return struct {
+        child: ChildT,
+        finished: bool,
+        carry: FInT,
+
+        pub inline fn init(child: anytype, carry: anytype) @This() {
+            return .{ .child = child, .finished = false, .carry = carry };
+        }
+
+        pub inline fn next(self: *@This()) ?FOutT {
+            if (self.finished) {
+                return null;
+            }
+            while (self.child.next()) |next_val| {
+                self.carry = f(self.carry, next_val);
+            }
+            self.finished = true;
+            return self.carry;
+        }
+    };
+}
+
 fn TakewhileT(comptime ChildT: type, comptime _f: anytype) type {
     const f = ExtractFn(_f);
 
@@ -459,6 +491,10 @@ pub fn IteratorT(comptime ChildT: type) type {
 
         pub inline fn scan(self: @This(), comptime f_carry: anytype, comptime f_rtn: anytype, carry: anytype) IteratorT(ScanT(@This(), f_carry, f_rtn, @TypeOf(carry))) {
             return Iterator(ScanT(@This(), f_carry, f_rtn, @TypeOf(carry)).init(self, carry));
+        }
+
+        pub inline fn reduce(self: @This(), comptime f: anytype, initial: anytype) IteratorT(ReduceT(@This(), f)) {
+            return Iterator(ReduceT(@This(), f).init(self, initial));
         }
     };
 }
@@ -673,6 +709,17 @@ test "scan" {
     try expectEqual(iter.next(), 7);
     try expectEqual(iter.next(), 9);
     try expectEqual(iter.next(), 10);
+    try expectEqual(iter.next(), 10);
+    try expectEqual(iter.next(), @as(?usize, null));
+}
+
+test "reduce" {
+    var iter = iterate([_]usize{ 4, 3, 2, 1, 0 }, .{})
+        .reduce(struct {
+        pub fn add(carry: usize, cur: usize) usize {
+            return carry + cur;
+        }
+    }, @as(usize, 0));
     try expectEqual(iter.next(), 10);
     try expectEqual(iter.next(), @as(?usize, null));
 }
