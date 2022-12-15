@@ -506,6 +506,10 @@ fn TakewhileT(comptime ChildT: type, comptime _f: anytype) type {
     };
 }
 
+fn _deref(x: anytype) @typeInfo(@TypeOf(x)).Pointer.child {
+    return x.*;
+}
+
 pub fn IteratorT(comptime ChildT: type) type {
     // TODO: handle pointers and whatnot
     const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
@@ -587,6 +591,48 @@ pub fn IteratorT(comptime ChildT: type) type {
 
         pub inline fn groupby(self: @This(), comptime kwargs: anytype) IteratorT(GroupByT(@This(), kwargs)) {
             return Iterator(GroupByT(@This(), kwargs).init(self));
+        }
+
+        pub inline fn deref(self: @This()) IteratorT(MapT(@This(), _deref)) {
+            return Iterator(MapT(@This(), _deref).init(self));
+        }
+
+        pub inline fn field_map(self: @This(), comptime field_name: []const u8) IteratorT(MapT(@This(), AtFieldT(field_name).at_field)) {
+            return self.map(AtFieldT(field_name).at_field);
+        }
+
+        // TODO: jeebus, how can we make these return types more pleasant?
+        pub inline fn batch(self: @This(), comptime n: usize) IteratorT(MapT(IteratorT(GroupByT(IteratorT(EnumerateT(@This())), EnGroupT(n){})), GroupValT)) {
+            return self
+                .enumerate()
+                .groupby(EnGroupT(n){})
+                .map(GroupValT);
+        }
+    };
+}
+
+const GroupValT = struct {
+    pub fn map_val_field(x: anytype) IteratorT(MapT(@TypeOf(x), AtFieldT("val").at_field)) {
+        return x.field_map("val");
+    }
+};
+
+fn EnGroupT(comptime n: usize) type {
+    const en_group = struct {
+        pub fn en_group(x: anytype) usize {
+            return x.i / n;
+        }
+    }.en_group;
+
+    return struct {
+        comptime key: @TypeOf(en_group) = en_group,
+    };
+}
+
+fn AtFieldT(comptime field_name: []const u8) type {
+    return struct {
+        pub fn at_field(x: anytype) @TypeOf(@field(x, field_name)) {
+            return @field(x, field_name);
         }
     };
 }
@@ -890,6 +936,31 @@ test "groupby eql" {
         var group = _group;
         while (group.next()) |val| : (i += 1) {
             try expectEqual(data[i], val);
+        }
+    }
+}
+
+test "deref" {
+    var a: usize = 3;
+    var iter = iterate([_]*usize{ &a, &a }, .{}).deref();
+    var i: usize = 0;
+    while (iter.next()) |val| : (i += 1) {
+        try expectEqual(a, val);
+    }
+    try expectEqual(@as(usize, 2), i);
+}
+
+test "batch" {
+    var data = [_]usize{ 0, 5, 8, 1, 3, 7, 0, 2, 8, 9, 10 };
+    var iter = iterate(data, .{}).batch(3);
+    var batch_i = [_]usize{ 0, 3, 6, 9 };
+    var i: usize = 0;
+    var j: usize = 0;
+    while (iter.next()) |_v| : (i += 1) {
+        var v = _v;
+        try expectEqual(j, batch_i[i]);
+        while (v.next()) |z| : (j += 1) {
+            try expectEqual(data[j], z);
         }
     }
 }
