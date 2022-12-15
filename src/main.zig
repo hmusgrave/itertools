@@ -325,9 +325,21 @@ fn TakeT(comptime ChildT: type) type {
     };
 }
 
+const GroupByTOptions = struct {
+    pub fn key(comptime _: ?type) ?type {
+        return null;
+    }
+
+    pub fn eql(comptime _: ?type) ?type {
+        return null;
+    }
+};
+
 // TODO: less lookahead
-fn GroupByT(comptime ChildT: type) type {
+fn GroupByT(comptime ChildT: type, comptime _kwargs: anytype) type {
     const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
+    const KwargsT = zkwargs.Options(GroupByTOptions);
+    const kwargs = KwargsT.parse(_kwargs);
 
     return struct {
         child: ChildT,
@@ -344,9 +356,23 @@ fn GroupByT(comptime ChildT: type) type {
             var i: usize = 0;
 
             while (cur.next()) |val| : (i += 1) {
-                if (prev_val != null and val != prev_val) {
-                    defer self.child = prev_iter;
-                    return start.take(i);
+                if (prev_val != null) {
+                    if (@hasField(KwargsT, "key")) {
+                        if (kwargs.key(val) != kwargs.key(prev_val)) {
+                            defer self.child = prev_iter;
+                            return start.take(i);
+                        }
+                    }
+                    if (@hasField(KwargsT, "eql")) {
+                        if (!kwargs.eql(val, prev_val)) {
+                            defer self.child = prev_iter;
+                            return start.take(i);
+                        }
+                    }
+                    if (val != prev_val) {
+                        defer self.child = prev_iter;
+                        return start.take(i);
+                    }
                 }
                 prev_val = val;
                 prev_iter = cur;
@@ -559,8 +585,8 @@ pub fn IteratorT(comptime ChildT: type) type {
             return Iterator(ReduceT(@This(), f).init(self, initial));
         }
 
-        pub inline fn groupby(self: @This()) IteratorT(GroupByT(@This())) {
-            return Iterator(GroupByT(@This()).init(self));
+        pub inline fn groupby(self: @This(), comptime kwargs: anytype) IteratorT(GroupByT(@This(), kwargs)) {
+            return Iterator(GroupByT(@This(), kwargs).init(self));
         }
     };
 }
@@ -817,7 +843,42 @@ test "single element reduce" {
 
 test "groupby" {
     var data = [_]usize{ 0, 0, 1, 2, 4, 4, 4, 5 };
-    var iter = iterate(data, .{}).groupby();
+    var group_i = [_]usize{ 0, 2, 3, 4, 7 };
+    var iter = iterate(data, .{}).groupby(.{});
+    var i: usize = 0;
+    var j: usize = 0;
+    while (iter.next()) |_group| : (j += 1) {
+        try expectEqual(group_i[j], i);
+        var group = _group;
+        while (group.next()) |val| : (i += 1) {
+            try expectEqual(data[i], val);
+        }
+    }
+}
+
+test "groupby key" {
+    var data = [_]usize{ 0, 0, 1, 3, 4, 4, 4, 5 };
+    var iter = iterate(data, .{}).groupby(.{ .key = struct {
+        pub fn odd(x: usize) bool {
+            return x & 1 == 1;
+        }
+    }.odd });
+    var i: usize = 0;
+    while (iter.next()) |_group| {
+        var group = _group;
+        while (group.next()) |val| : (i += 1) {
+            try expectEqual(data[i], val);
+        }
+    }
+}
+
+test "groupby eql" {
+    var data = [_]usize{ 0, 0, 1, 2, 4, 4, 4, 5 };
+    var iter = iterate(data, .{}).groupby(.{ .eql = struct {
+        pub fn close(x: usize, y: usize) bool {
+            return @fabs(@intToFloat(f32, x) - @intToFloat(f32, y)) < 3;
+        }
+    }.close });
     var i: usize = 0;
     while (iter.next()) |_group| {
         var group = _group;
