@@ -338,8 +338,8 @@ const GroupByTOptions = struct {
 // TODO: less lookahead
 fn GroupByT(comptime ChildT: type, comptime _kwargs: anytype) type {
     const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
-    const KwargsT = zkwargs.Options(GroupByTOptions);
-    const kwargs = KwargsT.parse(_kwargs);
+    const kwargs = zkwargs.Options(GroupByTOptions).parse(_kwargs);
+    const KwargsT = @TypeOf(kwargs);
 
     return struct {
         child: ChildT,
@@ -356,22 +356,22 @@ fn GroupByT(comptime ChildT: type, comptime _kwargs: anytype) type {
             var i: usize = 0;
 
             while (cur.next()) |val| : (i += 1) {
-                if (prev_val != null) {
+                if (prev_val) |pv| {
                     if (@hasField(KwargsT, "key")) {
-                        if (kwargs.key(val) != kwargs.key(prev_val)) {
+                        if (kwargs.key(val) != kwargs.key(pv)) {
                             defer self.child = prev_iter;
                             return start.take(i);
                         }
-                    }
-                    if (@hasField(KwargsT, "eql")) {
-                        if (!kwargs.eql(val, prev_val)) {
+                    } else if (@hasField(KwargsT, "eql")) {
+                        if (!kwargs.eql(val, pv)) {
                             defer self.child = prev_iter;
                             return start.take(i);
                         }
-                    }
-                    if (val != prev_val) {
-                        defer self.child = prev_iter;
-                        return start.take(i);
+                    } else {
+                        if (val != pv) {
+                            defer self.child = prev_iter;
+                            return start.take(i);
+                        }
                     }
                 }
                 prev_val = val;
@@ -858,13 +858,16 @@ test "groupby" {
 
 test "groupby key" {
     var data = [_]usize{ 0, 0, 1, 3, 4, 4, 4, 5 };
+    var group_i = [_]usize{ 0, 2, 4, 7 };
     var iter = iterate(data, .{}).groupby(.{ .key = struct {
         pub fn odd(x: usize) bool {
             return x & 1 == 1;
         }
     }.odd });
     var i: usize = 0;
-    while (iter.next()) |_group| {
+    var j: usize = 0;
+    while (iter.next()) |_group| : (j += 1) {
+        try expectEqual(group_i[j], i);
         var group = _group;
         while (group.next()) |val| : (i += 1) {
             try expectEqual(data[i], val);
@@ -874,13 +877,16 @@ test "groupby key" {
 
 test "groupby eql" {
     var data = [_]usize{ 0, 0, 1, 2, 4, 4, 4, 5 };
+    var group_i = [_]usize{0};
     var iter = iterate(data, .{}).groupby(.{ .eql = struct {
         pub fn close(x: usize, y: usize) bool {
             return @fabs(@intToFloat(f32, x) - @intToFloat(f32, y)) < 3;
         }
     }.close });
     var i: usize = 0;
-    while (iter.next()) |_group| {
+    var j: usize = 0;
+    while (iter.next()) |_group| : (j += 1) {
+        try expectEqual(group_i[j], i);
         var group = _group;
         while (group.next()) |val| : (i += 1) {
             try expectEqual(data[i], val);
