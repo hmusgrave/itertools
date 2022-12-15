@@ -296,8 +296,66 @@ fn SkipT(comptime ChildT: type) type {
             return .{ .child = child };
         }
 
-        pub inline fn next(self: *@This()) ?NextOptT {
+        pub inline fn next(self: *@This()) NextOptT {
             return self.child.next();
+        }
+    };
+}
+
+fn TakeT(comptime ChildT: type) type {
+    const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
+
+    return struct {
+        child: ChildT,
+        count: usize,
+        max_count: usize,
+
+        pub inline fn init(child: anytype, max_count: usize) @This() {
+            return .{ .child = child, .count = 0, .max_count = max_count };
+        }
+
+        pub inline fn next(self: *@This()) NextOptT {
+            if (self.count >= self.max_count) {
+                return null;
+            } else {
+                defer self.count += 1;
+                return self.child.next();
+            }
+        }
+    };
+}
+
+// TODO: less lookahead
+fn GroupByT(comptime ChildT: type) type {
+    const NextOptT = @typeInfo(@TypeOf(ChildT.next)).Fn.return_type.?;
+
+    return struct {
+        child: ChildT,
+
+        pub inline fn init(child: anytype) @This() {
+            return .{ .child = child };
+        }
+
+        pub inline fn next(self: *@This()) ?IteratorT(TakeT(ChildT)) {
+            var start = self.child;
+            var cur = self.child;
+            var prev_iter = self.child;
+            var prev_val: NextOptT = null;
+            var i: usize = 0;
+
+            while (cur.next()) |val| : (i += 1) {
+                if (prev_val != null and val != prev_val) {
+                    defer self.child = prev_iter;
+                    return start.take(i);
+                }
+                prev_val = val;
+                prev_iter = cur;
+            }
+
+            if (i == 0)
+                return null;
+            self.child = prev_iter;
+            return start.take(i);
         }
     };
 }
@@ -476,6 +534,10 @@ pub fn IteratorT(comptime ChildT: type) type {
             return Iterator(SkipT(@This()).init(self, n));
         }
 
+        pub inline fn take(self: @This(), n: usize) IteratorT(TakeT(@This())) {
+            return Iterator(TakeT(@This()).init(self, n));
+        }
+
         pub inline fn take_while(self: @This(), comptime f: anytype) IteratorT(TakewhileT(@This(), f)) {
             return Iterator(TakewhileT(@This(), f).init(self));
         }
@@ -495,6 +557,10 @@ pub fn IteratorT(comptime ChildT: type) type {
 
         pub inline fn reduce(self: @This(), comptime f: anytype, initial: anytype) IteratorT(ReduceT(@This(), f)) {
             return Iterator(ReduceT(@This(), f).init(self, initial));
+        }
+
+        pub inline fn groupby(self: @This()) IteratorT(GroupByT(@This())) {
+            return Iterator(GroupByT(@This()).init(self));
         }
     };
 }
@@ -747,4 +813,16 @@ test "single element reduce" {
     }, @as(usize, 0));
     try expectEqual(iter.next(), 1);
     try expectEqual(iter.next(), @as(?usize, null));
+}
+
+test "groupby" {
+    var data = [_]usize{ 0, 0, 1, 2, 4, 4, 4, 5 };
+    var iter = iterate(data, .{}).groupby();
+    var i: usize = 0;
+    while (iter.next()) |_group| {
+        var group = _group;
+        while (group.next()) |val| : (i += 1) {
+            try expectEqual(data[i], val);
+        }
+    }
 }
