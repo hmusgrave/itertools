@@ -1,4 +1,4 @@
-# itertools
+# itertools (non-functional, shelved for now)
 
 tools for iterators in Zig
 
